@@ -45,3 +45,4 @@ local/k3d-config.generated.yaml
 # Claude Code local state
 .claude/worktrees/
 .claude/settings.local.json
+**/.DS_Store
