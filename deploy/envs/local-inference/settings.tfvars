@@ -242,5 +242,13 @@ gdcn_helm_extra_values = <<-EOT
     image:
       repositoryPrefix: "972873489489.dkr.ecr.us-east-1.amazonaws.com/local-inference"
       name: "gen-ai"
-      tag: "jan-local-inference-12"
+      tag: "jan-local-inference-14"
+    agenticMaxIterations: 20
+    metricScoreBoostingMultiplier: 1.6
+    vectorStores:
+      qdrant:
+        timeout: 15
+    extraEnvVars:
+      - name: LOCAL_LLM_DISABLE_THINKING
+        value: "true"
 EOT
