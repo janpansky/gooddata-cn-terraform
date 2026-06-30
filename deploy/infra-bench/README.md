@@ -12,9 +12,20 @@ the agentic loop's many sequential calls. `gooddata-eval` measures none of these
 
 ## Files
 - `metrics.md` — metric definitions + comparison matrix (agree on this first).
-- `coldstart.sh <vllm|sie>` — cold-start phases (kubectl-orchestrated).
-- `loadtest.py` — warm TTFT/TPOT/e2e/throughput sweep (stdlib only).
-- `run-matrix.sh` — both servers, cold + warm sweep → scoreboard.
+- `coldstart.sh <vllm|sie|sglang>` — cold-start phases (kubectl-orchestrated).
+- `loadtest.py` — the load generator (stdlib only): streaming TTFT/TPOT/e2e/throughput, `--warmup` discard.
+- `incluster-bench.sh <server> [model]` — **credible** warm benchmark: runs `loadtest.py`
+  as a Job INSIDE the cluster (hits the Service directly, no port-forward / laptop-RTT),
+  with warmup discard + concurrency sweep + large sample. **Use this, not raw port-forward.**
+- `run-matrix.sh` — all servers, cold (`coldstart.sh`) + warm (`incluster-bench.sh`) → scoreboard.
+
+## Credibility (why in-cluster)
+Measuring via `kubectl port-forward` from a laptop inflates TTFT/e2e by the tunnel
+RTT (observed ~6× on TTFT: 0.42s port-forward vs 0.063s in-cluster for the same
+server). `incluster-bench.sh` runs the load generator as a pod in the cluster so
+latency is server-side. Warm numbers also use `--warmup` to discard first-request
+compile / CUDA-graph capture. Apples-to-apples = same model on every server
+(pass a model override; 27B only fits vLLM, so compare on a model that fits all, e.g. Qwen3-4B).
 
 ## Run
 ```bash

@@ -27,16 +27,10 @@ for s in "${SERVERS[@]}"; do
   # 1) cold start (leaves the server running)
   bash "$SCRIPT_DIR/coldstart.sh" "$s" "$MAX_TOKENS" | tee "$RES/$s-coldstart.json" || { echo "cold start failed for $s, skipping"; continue; }
 
-  # 2) warm sweep
-  kubectl -n "$NS" port-forward "svc/$SVC" "$LOCAL_PORT:$PORT" >/dev/null 2>&1 &
-  PF=$!; sleep 3
-  : > "$RES/$s-warm.jsonl"
-  for c in $CONCURRENCIES; do
-    python3 "$SCRIPT_DIR/loadtest.py" --base-url "http://localhost:$LOCAL_PORT/v1" \
-      --model "$MODEL" --concurrency "$c" --requests "$((c*4))" --max-tokens "$MAX_TOKENS" --json \
-      | tee -a "$RES/$s-warm.jsonl"
-  done
-  kill $PF 2>/dev/null || true
+  # 2) warm sweep — runs IN-CLUSTER (no port-forward / laptop-RTT) with warmup
+  #    discard + large sample, for credible server-side latency.
+  CONCURRENCIES="$CONCURRENCIES" bash "$SCRIPT_DIR/incluster-bench.sh" "$s" "$MODEL" \
+    | tee "$RES/$s-warm.txt" | grep -E '^\{' > "$RES/$s-warm.jsonl" || true
 
   # 3) scale down to free the GPU for the next server
   kubectl -n "$NS" scale "${WORKLOAD%%/*}" "${WORKLOAD##*/}" --replicas=0 >/dev/null 2>&1 || true
