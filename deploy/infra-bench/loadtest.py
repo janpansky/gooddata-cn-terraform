@@ -86,8 +86,17 @@ def main():
     ap.add_argument("--requests", type=int, default=8)
     ap.add_argument("--max-tokens", type=int, default=128)
     ap.add_argument("--api-key", default="local")
+    ap.add_argument("--warmup", type=int, default=0,
+                    help="warmup requests to run and DISCARD before measuring (kills first-request compile/CUDA-graph capture)")
     ap.add_argument("--json", action="store_true", help="emit JSON only")
     args = ap.parse_args()
+
+    # Warmup: run and discard, so the measured batch sees a steady-state server
+    # (first request triggers CUDA-graph capture / torch.compile / kernel autotune).
+    if args.warmup > 0:
+        with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
+            list(ex.map(lambda _: one_request(args.base_url, args.model, args.max_tokens, args.api_key),
+                        range(args.warmup)))
 
     wall0 = time.monotonic()
     results = []
@@ -109,6 +118,7 @@ def main():
         "model": args.model,
         "concurrency": args.concurrency,
         "requests": args.requests,
+        "warmup": args.warmup,
         "ok": len(ok),
         "errors": len(results) - len(ok),
         "error_rate": round((len(results) - len(ok)) / len(results), 3) if results else None,
