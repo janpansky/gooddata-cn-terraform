@@ -18,6 +18,7 @@ CONCURRENCIES="${CONCURRENCIES:-1 4 8 16}"
 REQS_PER_C="${REQS_PER_C:-25}"
 WARMUP="${WARMUP:-5}"
 MAX_TOKENS="${MAX_TOKENS:-128}"
+INPUT_TOKENS="${INPUT_TOKENS:-0}"
 BENCH_NS="${BENCH_NS:-default}"
 
 case "$SERVER" in
@@ -40,7 +41,7 @@ kubectl -n "$BENCH_NS" create configmap "$JOB-script" --from-file=loadtest.py="$
 # build the in-pod sweep command
 SWEEP=""
 for c in $CONCURRENCIES; do
-  SWEEP="$SWEEP python3 /bench/loadtest.py --base-url '$URL' --model '$MODEL' --concurrency $c --requests \$(( $c * $REQS_PER_C )) --warmup $WARMUP --max-tokens $MAX_TOKENS --json;"
+  SWEEP="$SWEEP python3 /bench/loadtest.py --base-url '$URL' --model '$MODEL' --concurrency $c --requests \$(( $c * $REQS_PER_C )) --warmup $WARMUP --max-tokens $MAX_TOKENS --input-tokens $INPUT_TOKENS --json;"
 done
 
 cat <<YAML | kubectl -n "$BENCH_NS" apply -f - >/dev/null

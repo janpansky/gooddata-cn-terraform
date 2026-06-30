@@ -21,6 +21,18 @@ from concurrent.futures import ThreadPoolExecutor
 PROMPT = "List three benefits of data-driven decision making, with one sentence each."
 
 
+def _build_prompt(input_tokens):
+    """Pad the prompt to ~input_tokens tokens (~4 chars/token) so TTFT reflects
+    a realistic agentic prefill (system prompt + tools + context), not a 1-liner.
+    0 = leave the short default."""
+    if not input_tokens:
+        return PROMPT
+    filler = ("Context: the analytics workspace contains sales, customers, products, "
+              "orders, returns and inventory across regions and time. ")
+    pad = filler * max(1, (input_tokens * 4) // len(filler))
+    return pad + "\n\n" + PROMPT
+
+
 def _percentile(values, p):
     if not values:
         return None
@@ -92,8 +104,13 @@ def main():
     ap.add_argument("--api-key", default="local")
     ap.add_argument("--warmup", type=int, default=0,
                     help="warmup requests to run and DISCARD before measuring (kills first-request compile/CUDA-graph capture)")
+    ap.add_argument("--input-tokens", type=int, default=0,
+                    help="pad the prompt to ~N input tokens (realistic agentic prefill); 0 = short default")
     ap.add_argument("--json", action="store_true", help="emit JSON only")
     args = ap.parse_args()
+
+    global PROMPT
+    PROMPT = _build_prompt(args.input_tokens)
 
     # Warmup: run and discard, so the measured batch sees a steady-state server
     # (first request triggers CUDA-graph capture / torch.compile / kernel autotune).
@@ -123,6 +140,7 @@ def main():
         "concurrency": args.concurrency,
         "requests": args.requests,
         "warmup": args.warmup,
+        "input_tokens": args.input_tokens,
         "ok": len(ok),
         "errors": len(results) - len(ok),
         "error_rate": round((len(results) - len(ok)) / len(results), 3) if results else None,
