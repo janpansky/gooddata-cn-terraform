@@ -65,10 +65,14 @@ def one_request(base_url, model, max_tokens, api_key):
                 choices = chunk.get("choices") or []
                 if choices:
                     delta = choices[0].get("delta", {})
-                    if delta.get("content"):
+                    # count content OR reasoning_content — servers with a
+                    # reasoning parser (vLLM --reasoning-parser) stream the text
+                    # in reasoning_content, so content-only misses TTFT/tokens.
+                    piece = delta.get("content") or delta.get("reasoning_content")
+                    if piece:
                         if ttft is None:
                             ttft = time.monotonic() - t0
-                        out_tokens += 1  # content-delta count = token proxy
+                        out_tokens += 1  # delta count = token proxy
                 if chunk.get("usage"):
                     usage_tokens = chunk["usage"].get("completion_tokens")
         e2e = time.monotonic() - t0
