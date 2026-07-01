@@ -43,17 +43,24 @@ def _percentile(values, p):
     return s[lo] + (s[hi] - s[lo]) * (k - lo)
 
 
-def one_request(base_url, model, max_tokens, api_key):
+def one_request(base_url, model, max_tokens, api_key, disable_thinking=False):
     """Fire one streaming request. Returns (ttft, e2e, out_tokens, ok, err)."""
     url = base_url.rstrip("/") + "/chat/completions"
-    body = json.dumps({
+    payload = {
         "model": model,
         "messages": [{"role": "user", "content": PROMPT}],
         "stream": True,
         "temperature": 0,
         "max_tokens": max_tokens,
         "stream_options": {"include_usage": True},
-    }).encode()
+    }
+    if disable_thinking:
+        # Match the production gen-ai config (LOCAL_LLM_DISABLE_THINKING): Qwen3
+        # otherwise emits a long <think> block before the answer, which inflates
+        # e2e latency and (with --reasoning-parser) hides tokens in
+        # reasoning_content so TTFT/TPOT read null. Off = prod-realistic + clean TTFT.
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {api_key}")
@@ -106,6 +113,8 @@ def main():
                     help="warmup requests to run and DISCARD before measuring (kills first-request compile/CUDA-graph capture)")
     ap.add_argument("--input-tokens", type=int, default=0,
                     help="pad the prompt to ~N input tokens (realistic agentic prefill); 0 = short default")
+    ap.add_argument("--disable-thinking", action="store_true",
+                    help="send chat_template_kwargs.enable_thinking=false (Qwen3) — matches the production gen-ai config; gives prod-realistic latency + clean TTFT")
     ap.add_argument("--json", action="store_true", help="emit JSON only")
     args = ap.parse_args()
 
@@ -116,13 +125,15 @@ def main():
     # (first request triggers CUDA-graph capture / torch.compile / kernel autotune).
     if args.warmup > 0:
         with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
-            list(ex.map(lambda _: one_request(args.base_url, args.model, args.max_tokens, args.api_key),
+            list(ex.map(lambda _: one_request(args.base_url, args.model, args.max_tokens,
+                                              args.api_key, args.disable_thinking),
                         range(args.warmup)))
 
     wall0 = time.monotonic()
     results = []
     with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
-        futs = [ex.submit(one_request, args.base_url, args.model, args.max_tokens, args.api_key)
+        futs = [ex.submit(one_request, args.base_url, args.model, args.max_tokens,
+                          args.api_key, args.disable_thinking)
                 for _ in range(args.requests)]
         for f in futs:
             results.append(f.result())

@@ -20,6 +20,9 @@ WARMUP="${WARMUP:-5}"
 MAX_TOKENS="${MAX_TOKENS:-128}"
 INPUT_TOKENS="${INPUT_TOKENS:-0}"
 BENCH_NS="${BENCH_NS:-default}"
+# DISABLE_THINKING=1 -> pass --disable-thinking (prod-realistic for Qwen3; clean TTFT)
+THINK_FLAG=""; [ "${DISABLE_THINKING:-0}" = "1" ] && THINK_FLAG="--disable-thinking"
+JOB_TIMEOUT="${JOB_TIMEOUT:-1800}"
 
 case "$SERVER" in
   vllm)   URL="http://vllm.inference.svc.cluster.local:8000/v1";   MODEL="Qwen/Qwen3.6-27B" ;;
@@ -41,7 +44,7 @@ kubectl -n "$BENCH_NS" create configmap "$JOB-script" --from-file=loadtest.py="$
 # build the in-pod sweep command
 SWEEP=""
 for c in $CONCURRENCIES; do
-  SWEEP="$SWEEP python3 /bench/loadtest.py --base-url '$URL' --model '$MODEL' --concurrency $c --requests \$(( $c * $REQS_PER_C )) --warmup $WARMUP --max-tokens $MAX_TOKENS --input-tokens $INPUT_TOKENS --json;"
+  SWEEP="$SWEEP python3 /bench/loadtest.py --base-url '$URL' --model '$MODEL' --concurrency $c --requests \$(( $c * $REQS_PER_C )) --warmup $WARMUP --max-tokens $MAX_TOKENS --input-tokens $INPUT_TOKENS $THINK_FLAG --json;"
 done
 
 cat <<YAML | kubectl -n "$BENCH_NS" apply -f - >/dev/null
@@ -68,8 +71,8 @@ spec:
             name: $JOB-script
 YAML
 
-echo ">> waiting for benchmark Job to finish..."
-kubectl -n "$BENCH_NS" wait --for=condition=complete "job/$JOB" --timeout=600s 2>/dev/null \
+echo ">> waiting for benchmark Job to finish (timeout ${JOB_TIMEOUT}s)..."
+kubectl -n "$BENCH_NS" wait --for=condition=complete "job/$JOB" --timeout="${JOB_TIMEOUT}s" 2>/dev/null \
   || { echo "Job did not complete; logs:"; kubectl -n "$BENCH_NS" logs "job/$JOB" 2>/dev/null | tail -20; exit 2; }
 
 echo "=== RESULTS ($SERVER, $MODEL) ==="
