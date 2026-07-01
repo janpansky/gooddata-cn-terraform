@@ -65,7 +65,10 @@ spec:
             - --tool-call-parser=qwen3_coder
             - --reasoning-parser=qwen3
             - --gpu-memory-utilization=0.95
-            - --guided-decoding-backend=outlines
+            # NOTE: --guided-decoding-backend=outlines removed — the current
+            # vllm/vllm-openai image rejects it ("unrecognized arguments") and
+            # crashloops. In this vLLM, guided decoding is a per-request feature
+            # (guided_choice / response_format in the API), not a startup flag.
             - --enforce-eager
           ports:
             - containerPort: 8000
