@@ -189,6 +189,14 @@ module "eks" {
         use_custom_launch_template = false
         disk_size                  = 300
 
+        # Pin the GPU pool to a SINGLE AZ (index 1 = us-east-1b, where the
+        # model-cache EBS PVC binds). The pool otherwise inherits all private
+        # subnets (multi-AZ); after a scale-to-zero + scale-up the node can land
+        # in a different AZ than the AZ-locked cache volume, which leaves the
+        # inference pod unschedulable and makes the cluster-autoscaler add GPU
+        # nodes in a runaway. One AZ keeps node and cache volume co-located.
+        subnet_ids = [local.private_subnet_ids[1]]
+
         labels = {
           workload = "inference"
         }
