@@ -1,0 +1,40 @@
+# SIE model config for Gemma-4-26B-A4B-it (MoE: 26B params, ~4B active).
+# GPU 3: dedicated worker. FP8 is REQUIRED — BF16 weights are ~52 GB (exceeds 48 GB).
+#
+# Prerequisites:
+#   - Accept Google's Gemma license at huggingface.co/google/gemma-4-26B-A4B-it
+#   - Set HF_TOKEN in providers.env (read-only token is sufficient)
+#   - install-sie.sh will create the sie-hf-token k8s Secret from that token
+#
+# Mounted into sie-config by install-sie.sh at
+#   /app/models/google__gemma-4-26B-A4B-it.yaml
+sie_id: google/gemma-4-26B-A4B-it
+hf_id: google/gemma-4-26B-A4B-it
+inputs:
+  text: true
+  image: false
+  audio: false
+  video: false
+tasks:
+  generate:
+    # Gemma 4 supports 128K context but we cap at 16K to bound KV memory.
+    context_length: 16384
+    max_output_tokens: 4096
+    capabilities:
+      grammar:
+        - json_schema
+        - regex
+      streaming: true
+      tools: true
+max_sequence_length: 16384
+profiles:
+  default:
+    adapter_path: sie_server.adapters.sglang.generation:SGLangGenerationAdapter
+    max_batch_tokens: 8192
+    kv_budget_tokens: 7168
+    adapter_options:
+      loadtime:
+        # Online FP8 quantization: ~26 GB on 48 GB L40S (fits with room for KV).
+        quantization: fp8
+        mem_fraction_static: 0.80
+        grammar_backend: outlines

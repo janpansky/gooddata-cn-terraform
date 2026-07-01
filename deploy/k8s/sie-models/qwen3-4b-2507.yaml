@@ -1,0 +1,35 @@
+# SIE model config for Qwen3-4B-Instruct-2507 (~8 GB on L40S 48 GB).
+# GPU 2: LRU hot-swap alongside Qwen3-14B and Qwen3.5-4B.
+# Mounted into sie-config by install-sie.sh at /app/models/Qwen__Qwen3-4B-Instruct-2507.yaml.
+sie_id: Qwen/Qwen3-4B-Instruct-2507
+hf_id: Qwen/Qwen3-4B-Instruct-2507
+inputs:
+  text: true
+  image: false
+  audio: false
+  video: false
+tasks:
+  generate:
+    context_length: 32768
+    max_output_tokens: 4096
+    capabilities:
+      grammar:
+        - json_schema
+        - regex
+      streaming: true
+      tools: true
+    chat_template_kwargs:
+      enable_thinking: false
+max_sequence_length: 32768
+profiles:
+  default:
+    adapter_path: sie_server.adapters.sglang.generation:SGLangGenerationAdapter
+    max_batch_tokens: 8192
+    kv_budget_tokens: 7168
+    adapter_options:
+      loadtime:
+        mem_fraction_static: 0.90
+        grammar_backend: outlines
+        reasoning_parser: qwen3
+        # Non-Coder Qwen3 emits Hermes-style tool calls; qwen3_coder rejects them.
+        tool_call_parser: hermes

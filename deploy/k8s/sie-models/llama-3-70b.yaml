@@ -1,0 +1,48 @@
+# SIE model config for Llama-3.3-70B-Instruct (AWQ-INT4, ~35 GB on L40S 48 GB).
+# GPU 1: dedicated worker (model size prevents co-residence with others).
+#
+# hf_id points to the public AWQ quantized variant — no HuggingFace token needed.
+# To use the gated original (Meta license), change hf_id to:
+#   meta-llama/Llama-3.3-70B-Instruct
+# and set HF_TOKEN in providers.env (after accepting the license on huggingface.co).
+#
+# Mounted into sie-config by install-sie.sh at
+#   /app/models/meta-llama__Llama-3.3-70B-Instruct.yaml
+sie_id: meta-llama/Llama-3.3-70B-Instruct
+# hugging-quants only publishes an AWQ-INT4 for Llama-3.1 (the 3.3 repo 404s).
+# ibnzterrell's is the AWQ-INT4 (AutoAWQ, GEMM, group-size 128) of Llama-3.3-70B.
+hf_id: ibnzterrell/Meta-Llama-3.3-70B-Instruct-AWQ-INT4
+inputs:
+  text: true
+  image: false
+  audio: false
+  video: false
+tasks:
+  generate:
+    # 70B AWQ-INT4 (~35GB) on a single 48GB L40S: cap context at 16K so the KV
+    # pool fits alongside the weights (32K OOMs even at mem_fraction 0.9). 16K is
+    # the known minimum for the agentic skill prompts.
+    context_length: 16384
+    max_output_tokens: 4096
+    capabilities:
+      grammar:
+        - json_schema
+        - regex
+      streaming: true
+      tools: true
+max_sequence_length: 16384
+profiles:
+  default:
+    adapter_path: sie_server.adapters.sglang.generation:SGLangGenerationAdapter
+    max_batch_tokens: 8192
+    kv_budget_tokens: 7168
+    adapter_options:
+      loadtime:
+        # AWQ-INT4 quantization auto-detected from model config; explicit here
+        # as a safeguard so SGLang doesn't attempt BF16 loading (would OOM).
+        quantization: awq_marlin
+        # 35 GB weights on 48 GB = 72.9 % utilization; 0.80 leaves ~2.6 GB
+        # headroom plus the 7168-token KV budget (~2 GB for a 70B model).
+        mem_fraction_static: 0.90
+        grammar_backend: outlines
+        tool_call_parser: llama3

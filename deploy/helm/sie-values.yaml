@@ -1,14 +1,20 @@
-# Minimal SIE (Superlinked Inference Engine) self-hosted install for the
-# local-inference environment — SIE runs IN OUR CLUSTER on our GPU pool.
+# SIE (Superlinked Inference Engine) self-hosted install for the local-inference
+# environment — 1 sglang worker on a g6e.4xlarge (1x L40S 48GB).
 #
 # Chart: oci://ghcr.io/superlinked/charts/sie-cluster
-# Install: ./install-sie.sh   (helm install with this values file)
+# Install: ./install-sie.sh   (creates HF secret, applies model configs, runs helm)
 #
-# Philosophy: smallest thing that serves generation in-cluster. No KEDA, no
-# bundled Prometheus stack, no ingress (gateway is ClusterIP; only gen-ai
-# talks to it, from inside the cluster). One warm L4 worker (minReplicas=1)
-# instead of scale-to-zero — the GPU node itself scales via the cluster
-# autoscaler when the worker pod exists.
+# GPU layout (2 separate g6e.4xlarge nodes, each with 1x L40S 48GB):
+#   Node A / GPU 0: vLLM         → Qwen3.6-27B FP8         (inference namespace)
+#   Node B / GPU 0: SIE sglang-0 → Qwen3-14B BF16 + 4B LRU (~28.5 GB + LRU swap)
+#
+# Each pod requests nvidia.com/gpu:1. With only 1 GPU per node, Kubernetes
+# automatically places vLLM and the SIE worker on separate nodes.
+# SIE models are served through the gateway:
+#   http://sie-gateway.sie.svc.cluster.local:8080/v1
+#
+# Cost: scale workers to 0 with ./down.sh (GPU nodes drain in ~10 min).
+# Bring back with ./up.sh.
 
 fullnameOverride: sie
 
@@ -36,31 +42,23 @@ ingress:
 
 gateway:
   auth:
-    mode: none # in-cluster only; never expose this service
+    mode: none # in-cluster only — never expose this service externally
 
-# Our GPU pool: g6.xlarge = 1x NVIDIA L4 24GB (same mapping as upstream
-# values-aws.yaml), nodes tainted workload=inference by the terraform module.
+# g6e.4xlarge = 1x NVIDIA L40S 48GB, 16 vCPU, 128 GB RAM.
 machineProfiles:
-  l4:
-    gpuType: nvidia-l4
-    machineType: g6.xlarge
-    spot: false
+  l40s:
+    gpuType: nvidia-l40s
+    machineType: g6e.4xlarge
+    spot: true
 
 workers:
   common:
     platform: cuda12
-    # The real cold-start gate (fixed in SIE >=0.6.7, default 900s): rendered as
-    # SIE_MODEL_READY_TIMEOUT_S into worker + sidecar; the SGLang startup-health
-    # fallback that the old non-configurable ~42s window enforced. 27B FP8 on an
-    # L40S loads well within this. Keep >= the SGLang profile startup_timeout_s.
+    # 27B FP8 loads in <10 min; 70B AWQ-INT4 loads in <20 min from S3 cache.
+    # Keep timeout generous for cold first-start (full HuggingFace download).
     modelReadyTimeoutSec: 1800
-    # Model load runs in the worker MAIN thread (adapter.requires_main_thread)
-    # and blocks the HTTP server for minutes — default liveness (3x30s) kills
-    # the container mid-load, causing an infinite load->SIGKILL loop.
-    # Tolerate ~5 min of unresponsiveness.
-    # Liveness budget (failureThreshold * periodSeconds) MUST exceed
-    # modelReadyTimeoutSec (1800) — the chart validates this so kubelet can't
-    # SIGKILL the worker mid-load. 70 * 30 = 2100s > 1800s.
+    # Liveness budget must exceed modelReadyTimeoutSec (1800 s).
+    # 70 * 30 = 2100 s > 1800 s.
     probes:
       liveness:
         initialDelaySeconds: 10
@@ -72,32 +70,34 @@ workers:
         timeoutSeconds: 10
         failureThreshold: 60
     extraEnv:
-      # The Qwen3-4B manifest loads with mem_fraction_static=0.85, which on a
-      # 46GB L40S lands at ~86.6% VRAM — just above the default 85% pressure
-      # threshold, so the LRU monitor evicted the model right after every
-      # load (load -> evict -> reload loop on each request). 95% leaves the
-      # single-model deployment resident.
+      # LRU eviction threshold for multi-model GPU 2 (Qwen14B + 4B hot-swap).
+      # 95% leaves models resident; the LRU monitor evicts only under real pressure.
       - name: SIE_MEMORY_PRESSURE_THRESHOLD_PERCENT
         value: "95"
-      # 27B (~54GB) download + FP8 quantize exceeds the default model-load
-      # startup window — raise it generously for cold 27B loads.
       - name: SIE_MODEL_LOAD_TIMEOUT_S
         value: "1800"
       - name: SIE_ADAPTER_STARTUP_TIMEOUT_S
         value: "1800"
       - name: SIE_SERVER_STARTUP_TIMEOUT_S
         value: "1800"
-    # S3 model cache (terraform: aws/inference-cache.tf) — weights survive
-    # GPU scale-to-zero, workers fall back to Hugging Face on cache miss.
-    # Node-role credentials (no IRSA needed).
+      # HuggingFace token — required for gated models (Gemma-4-26B-A4B-it).
+      # Secret is created by install-sie.sh from providers/providers.env (HF_TOKEN).
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: sie-hf-token
+            key: HF_TOKEN
+            optional: true  # safe to omit for public models
+    # S3 model cache — weights survive GPU scale-to-zero; re-loading from S3
+    # takes ~2 min vs ~20 min from HuggingFace. Node-role credentials (no IRSA).
     clusterCache:
       enabled: true
       url: s3://local-inference-model-cache-972873489489/models
   pools:
-    l4:
+    l40s:
       enabled: true
-      machineProfile: l4
-      gpuType: l4
+      machineProfile: l40s
+      gpuType: l40s
       nodeSelector:
         workload: inference
       tolerations:
@@ -107,19 +107,18 @@ workers:
       gpu:
         count: 1
         product: NVIDIA-L40S
-      # g6e.xlarge has exactly 4 vCPU — the chart default (requests cpu=4)
-      # can never fit after kube-reserved, so the autoscaler refuses to
-      # scale up the pool. Request less, burst to the limit.
+      # g6e.4xlarge: 16 vCPU, 128 GB RAM. 1 worker (Qwen3-14B + 4B LRU).
+      # vLLM runs on the other g6e.4xlarge node (inference namespace).
       resources:
         requests:
-          cpu: "2"
-          memory: "12Gi"
-        limits:
-          cpu: "3500m"
+          cpu: "6"
           memory: "24Gi"
-      # Generation bundle (sglang). minReplicas=1 = one warm worker; with
-      # autoscaling disabled this is the fixed replica count.
+        limits:
+          cpu: "14"
+          memory: "96Gi"
       bundles:
+        # 1 sglang worker — Qwen3-14B BF16 primary, Qwen3-4B-2507 LRU hot-swap.
+        # SIE's sticky routing pins Qwen3-14B as the primary resident model.
         sglang:
           minReplicas: 1
           maxReplicas: 1
