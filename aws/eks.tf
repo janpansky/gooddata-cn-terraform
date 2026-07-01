@@ -184,18 +184,57 @@ module "eks" {
     var.enable_inference_gpu_pool ? {
       inference-gpu = {
         create                     = true
-        ami_type                   = "BOTTLEROCKET_x86_64_NVIDIA"
-        instance_types             = [var.inference_gpu_instance_type]
-        use_custom_launch_template = false
-        disk_size                  = 300
+        ami_type       = "BOTTLEROCKET_x86_64_NVIDIA"
+        instance_types = concat([var.inference_gpu_instance_type], var.inference_gpu_additional_instance_types)
+        capacity_type  = "ON_DEMAND"
 
-        # Pin the GPU pool to a SINGLE AZ (index 1 = us-east-1b, where the
-        # model-cache EBS PVC binds). The pool otherwise inherits all private
-        # subnets (multi-AZ); after a scale-to-zero + scale-up the node can land
-        # in a different AZ than the AZ-locked cache volume, which leaves the
-        # inference pod unschedulable and makes the cluster-autoscaler add GPU
-        # nodes in a runaway. One AZ keeps node and cache volume co-located.
-        subnet_ids = [local.private_subnet_ids[1]]
+        # This pool needs a custom launch template (block_device_mappings below),
+        # and with a custom LT EKS does NOT auto-attach the cluster primary
+        # security group the way it does for the default (non-custom-LT) node
+        # groups. Without it the GPU nodes only carry the module node SG, their
+        # pods can't reach CoreDNS/NATS (cross-node pod traffic is dropped), and
+        # DNS times out cluster-wide on these nodes. Attach it explicitly.
+        attach_cluster_primary_security_group = true
+
+        # Custom LT also defaults the IMDS hop limit to 1, which stops pods (one
+        # network hop from the node) from reaching IMDS — so pods relying on the
+        # node IAM role for AWS creds get NoCredentialsError (e.g. the SIE worker
+        # pulling model weights from the S3 cluster cache). EKS's default LT uses
+        # 2; set it explicitly here.
+        metadata_options = {
+          http_endpoint               = "enabled"
+          http_tokens                 = "required"
+          http_put_response_hop_limit = 2
+        }
+
+        # Bottlerocket has two block devices:
+        #   /dev/xvda (4 GB)  — read-only OS root; disk_size would resize this but it's useless
+        #   /dev/xvdb (18 GB) — writable data volume: container images, model weights, etc.
+        # We must explicitly resize xvdb; disk_size alone only touches xvda.
+        # NVIDIA container images + model weights easily exceed the 18 GB AMI default.
+        block_device_mappings = {
+          xvdb = {
+            device_name = "/dev/xvdb"
+            ebs = {
+              volume_size           = 300
+              volume_type           = "gp3"
+              delete_on_termination = true
+            }
+          }
+        }
+
+        # Span ALL AZs (1a/1b default private + 1c/1d inference overflow) so the
+        # cluster-autoscaler can place GPU nodes wherever g6e capacity exists.
+        # Single-AZ pinning is unworkable here: g6e.4xlarge on-demand capacity is
+        # spotty (~1 node per AZ), so two nodes can't come from one AZ. Neither
+        # workload needs a fixed AZ: SIE uses an emptyDir model cache, and vLLM's
+        # cache PVC is gp3/WaitForFirstConsumer so it binds in whatever AZ the
+        # pod's node lands. (Trade-off vs the old pin: after a vLLM scale-to-zero
+        # its bound PVC re-locks it to that AZ on unpark — handle at unpark time.)
+        subnet_ids = concat(
+          local.private_subnet_ids,
+          [for s in aws_subnet.inference_private : s.id],
+        )
 
         labels = {
           workload = "inference"

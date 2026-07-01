@@ -74,3 +74,44 @@ module "vpc" {
   }
 
 }
+
+# ---------------------------------------------------------------------------
+# Inference-only private subnets in us-east-1c and us-east-1d.
+#
+# These AZs are NOT in the default VPC (which uses the first 2 AZs returned
+# by the API, us-east-1a and us-east-1b). g6e GPU instances are often out of
+# capacity in us-east-1a/1b; us-east-1c and us-east-1d are the overflow AZs.
+#
+# Created as standalone resources (not via the VPC module) so that adding them
+# does not alter existing subnet CIDRs or trigger any subnet replacement.
+# The inference-gpu EKS node group references these subnets directly; other
+# node groups and the EKS cluster continue using the VPC module's subnets.
+# ---------------------------------------------------------------------------
+locals {
+  inference_subnet_azs = local.create_vpc ? {
+    "us-east-1c" = "10.0.64.0/20"
+    "us-east-1d" = "10.0.80.0/20"
+  } : {}
+}
+
+resource "aws_subnet" "inference_private" {
+  for_each = local.inference_subnet_azs
+
+  vpc_id            = local.vpc_id
+  cidr_block        = each.value
+  availability_zone = each.key
+
+  tags = merge(local.common_tags, {
+    Name                                           = "${var.deployment_name}-inference-${each.key}"
+    "kubernetes.io/role/internal-elb"              = "1"
+    "kubernetes.io/cluster/${var.deployment_name}" = "shared"
+  })
+}
+
+resource "aws_route_table_association" "inference_private" {
+  for_each = aws_subnet.inference_private
+
+  subnet_id = each.value.id
+  # single_nat_gateway = true → one private route table for all private subnets
+  route_table_id = module.vpc[0].private_route_table_ids[0]
+}

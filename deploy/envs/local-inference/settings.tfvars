@@ -27,9 +27,14 @@ eks_max_nodes = 6
 # (deploy/k8s/vllm-qwen.yaml) remains as an alternative server on the same
 # pool for comparison.
 ###
-enable_inference_gpu_pool   = true
-inference_gpu_instance_type = "g6e.xlarge" # 1x L40S 48GB — Qwen3.6-27B FP8 via vLLM
-inference_gpu_max_nodes     = 1
+enable_inference_gpu_pool                = true
+inference_gpu_instance_type              = "g6e.4xlarge"    # 1x L40S 48GB, on-demand — 2 nodes
+# Fallback types (all 1x L40S 48GB, >=16 vCPU) so the autoscaler isn't stuck on
+# g6e.4xlarge scarcity — g6e capacity is spotty per-AZ. Combined with the
+# multi-AZ subnet spread in aws/eks.tf, this maximizes the chance of landing
+# both GPU nodes. Keep to 1-GPU types so scale-from-zero GPU accounting stays 1:1.
+inference_gpu_additional_instance_types  = ["g6e.8xlarge", "g6e.16xlarge"]
+inference_gpu_max_nodes                  = 2                # Node A: vLLM Qwen27B, Node B: SIE Qwen14B+4B
 
 ###
 # DNS

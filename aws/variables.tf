@@ -478,6 +478,12 @@ variable "inference_gpu_instance_type" {
   default     = "g6e.xlarge"
 }
 
+variable "inference_gpu_additional_instance_types" {
+  description = "Extra instance types added to the SPOT MixedInstancesPolicy Overrides alongside inference_gpu_instance_type. Diversifies Spot pools so price-capacity-optimized can grab whichever recovers first. Must share GPU topology with the primary type (e.g. g6e.24xlarge is also 4x L40S 48GB)."
+  type        = list(string)
+  default     = []
+}
+
 variable "inference_gpu_max_nodes" {
   description = "Maximum number of nodes in the inference GPU pool."
   type        = number
