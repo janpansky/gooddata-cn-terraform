@@ -2,8 +2,8 @@
 # AWS
 ###
 aws_profile_name = "aws-panther-dev"
-aws_region       = "us-east-1"
-deployment_name  = "jan-inference"
+aws_region       = "eu-central-1"
+deployment_name  = "jan-inference-eu"
 
 ###
 # GoodData CN
@@ -28,7 +28,7 @@ eks_max_nodes = 6
 # pool for comparison.
 ###
 enable_inference_gpu_pool   = true
-inference_gpu_instance_type = "g6e.2xlarge" # 1x L40S 48GB — back to the card with actual capacity; clean recovery/cold-start re-run (80GB pursued in Frankfurt env)
+inference_gpu_instance_type = "p4de.24xlarge" # 8x A100 80GB in us-east-1c (H100 had zero on-demand capacity); 1 A100 used, BF16
 inference_gpu_max_nodes     = 1
 
 ###
@@ -46,7 +46,7 @@ tls_mode           = "acm"
 ###
 # Organization
 ###
-auth_hostname = "auth.jan-inference.dev11.devgdc.com"
+auth_hostname = "auth.jan-inference-eu.dev11.devgdc.com"
 
 gdcn_orgs = [
   {
@@ -54,7 +54,7 @@ gdcn_orgs = [
     name        = "Main"
     admin_user  = "admin"
     admin_group = "adminGroup"
-    hostname    = "gooddata.jan-inference.dev11.devgdc.com"
+    hostname    = "gooddata.jan-inference-eu.dev11.devgdc.com"
   }
 ]
 

@@ -27,7 +27,7 @@ set -uo pipefail   # deliberately NOT -e: one failing phase must not abort the w
 ###
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$SCRIPT_DIR/results-27b-h100.md"
-SERVERS="${SERVERS:-vllm sie}"          # vLLM baseline first, then SIE (the point)
+SERVERS="${SERVERS:-vllm sie sglang}"   # full 3-way head-to-head on 27B (all fit on 80GB)
 CONC="${CONC:-1 4 8 16 32}"
 REQS_PER_C="${REQS_PER_C:-15}"
 INPUT_TOKENS="${INPUT_TOKENS:-2048}"
