@@ -38,3 +38,26 @@ profiles:
         quantization: fp8
         mem_fraction_static: 0.80
         grammar_backend: outlines
+        # Gemma-4's own chat template renders custom tools with its native
+        # <|turn>/<|tool>/<|channel> control-token format (not JSON) — a
+        # shape SIE's tool-call parser does not recognize (it expects
+        # Hermes-style <tool_call>{"name": ..., "arguments": {...}}</tool_call>).
+        # Same override as Llama-3.3 (see llama-3-70b.yaml): `inject_tool_prompt`
+        # withholds `tools` from Gemma's own template and injects a system
+        # message instructing the model to reply in SIE's existing Hermes
+        # format instead. `tool_call_parser: hermes` then makes SIE parse the
+        # (now Hermes-shaped) output correctly.
+        #
+        # KNOWN OPEN RISK (untested): Gemma's template also renders a
+        # structural "<|channel>thought<channel|>" block at the start of any
+        # assistant turn that follows a system message — independent of
+        # whether tools are present. SIE's parser only scans for the literal
+        # <tool_call> substring, so a leaked thought preamble likely won't
+        # break tool-call *parsing*, but may leak chain-of-thought text into
+        # the visible response before the actual answer. No clean template
+        # toggle was found to suppress this (enable_thinking only adds
+        # *extra* forced thinking, it doesn't gate this baseline scaffold).
+        # Verify empirically; may need a Qwen3-style reasoning-stripping
+        # follow-up if this shows up as garbled visible output.
+        tool_call_parser: hermes
+        inject_tool_prompt: true

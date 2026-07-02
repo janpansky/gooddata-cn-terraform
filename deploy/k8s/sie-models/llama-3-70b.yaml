@@ -45,4 +45,19 @@ profiles:
         # headroom plus the 7168-token KV budget (~2 GB for a 70B model).
         mem_fraction_static: 0.90
         grammar_backend: outlines
-        tool_call_parser: llama3
+        # Llama-3.3's own chat template renders custom tools with its native
+        # instruction to reply with a bare, unwrapped
+        # {"name": ..., "parameters": ...} object — a shape SIE's tool-call
+        # parser does not recognize (it expects Hermes-style
+        # <tool_call>{"name": ..., "arguments": {...}}</tool_call>). Rather
+        # than teach the parser a new on-wire format, `inject_tool_prompt`
+        # has the worker override the tool preamble entirely: it withholds
+        # `tools` from Llama's own template and instead injects a system
+        # message instructing the model to reply in SIE's existing Hermes
+        # format. `tool_call_parser: hermes` then makes SIE parse the
+        # (now Hermes-shaped) output correctly; sglang itself never sees
+        # this flag (SIE calls its raw /generate endpoint, not sglang's own
+        # OpenAI-compatible chat endpoint, so sglang's built-in tool-call
+        # extraction is unused either way).
+        tool_call_parser: hermes
+        inject_tool_prompt: true

@@ -54,6 +54,20 @@ machineProfiles:
 workers:
   common:
     platform: cuda12
+    # Custom build with the Llama-3.3 tool-calling fix (inject_tool_prompt),
+    # not yet upstreamed to ghcr.io/superlinked/sie-server. Built from
+    # sie@ptom/llama-fix via packages/sie_server/Dockerfile.cuda12
+    # (--build-arg BUNDLE=sglang). Revert to the chart default (remove this
+    # block) once the fix lands upstream and the chart version is bumped.
+    image:
+      repository: 972873489489.dkr.ecr.us-east-1.amazonaws.com/local-inference/sie-server
+      tag: ptom-llama-fix
+      # We reuse this tag across iterative pushes (mutable ECR repo) instead
+      # of minting a new tag per build. IfNotPresent (the chart default)
+      # then reuses whatever's cached on the node — confirmed the hard way:
+      # a rebuilt-and-repushed image under the same tag still ran the OLD
+      # cached digest after a pod restart. Always guarantees a fresh pull.
+      pullPolicy: Always
     # 27B FP8 loads in <10 min; 70B AWQ-INT4 loads in <20 min from S3 cache.
     # Keep timeout generous for cold first-start (full HuggingFace download).
     modelReadyTimeoutSec: 1800
